@@ -1,0 +1,90 @@
+.game { outline: none; }
+.game:focus-visible { outline: 3px solid #38bdf8; outline-offset: 4px; border-radius: .5rem; }
+
+.hud {
+    display: flex;
+    justify-content: space-around;
+    margin-bottom: .75rem;
+    font-size: 1.1rem;
+}
+.hud .label { color: #cbd5e1; margin-right: .3rem; }
+
+.board-wrap {
+    position: relative;
+    width: min(92vw, 28rem);
+    margin: 0 auto;
+}
+
+.board {
+    display: grid;
+    grid-template-columns: repeat(var(--size), 1fr);
+    grid-template-rows: repeat(var(--size), 1fr);
+    gap: 1px;
+    aspect-ratio: 1;
+    background: #334155;
+    border: 3px solid #475569;
+    border-radius: .5rem;
+}
+
+.cell { background: #0f172a; }
+.cell.snake { background: #22c55e; border-radius: 3px; }
+.cell.head { background: #bbf7d0; border-radius: 5px; }
+.cell.food { background: #ef4444; border-radius: 50%; }
+
+.overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 23, 42, .82);
+    border-radius: .5rem;
+}
+.overlay p { margin: .25rem 0; }
+.overlay .big { font-size: 2rem; font-weight: 700; }
+
+kbd {
+    background: #e2e8f0;
+    color: #0f172a;
+    padding: .05rem .4rem;
+    border-radius: .25rem;
+    font-weight: 600;
+}
+
+.controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 2rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+
+.dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 3.2rem);
+    grid-template-rows: repeat(3, 3.2rem);
+    gap: .3rem;
+}
+.dpad .up { grid-column: 2; grid-row: 1; }
+.dpad .left { grid-column: 1; grid-row: 2; }
+.dpad .right { grid-column: 3; grid-row: 2; }
+.dpad .down { grid-column: 2; grid-row: 3; }
+
+.dpad button, .action {
+    border: 0;
+    border-radius: .5rem;
+    background: #38bdf8;
+    color: #0f172a;
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 1.1rem;
+}
+.dpad button:active, .action:active { background: #0ea5e9; }
+
+.actions { display: flex; flex-direction: column; gap: .5rem; }
+.action { padding: .6rem 1.4rem; }
+.action.secondary { background: #e2e8f0; }
+
+.help { color: #cbd5e1; font-size: .9rem; margin-top: 1rem; }

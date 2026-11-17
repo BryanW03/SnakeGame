@@ -1,0 +1,324 @@
+@implements IDisposable
+@inject IJSRuntime JS
+
+<div class="game"
+     tabindex="0"
+     @ref="gameRef"
+     @onkeydown="OnKeyDown"
+     aria-label="Snake game. Use the arrow keys or W A S D to move, Space to start or pause, Enter to restart.">
+
+    <div class="hud" role="status" aria-live="polite">
+        <div><span class="label">Score</span> <strong>@score</strong></div>
+        <div><span class="label">Level</span> <strong>@Level</strong></div>
+        <div><span class="label">Best</span> <strong>@highScore</strong></div>
+    </div>
+
+    <div class="board-wrap">
+        <div class="board" style="--size:@Size" role="img" aria-label="Game board, @Size by @Size cells. Snake length @snake.Count.">
+            @for (var y = 0; y < Size; y++)
+            {
+                for (var x = 0; x < Size; x++)
+                {
+                    <div class="cell @CellClass(x, y)"></div>
+                }
+            }
+        </div>
+
+        @if (state != GameState.Running)
+        {
+            <div class="overlay">
+                @if (state == GameState.Ready)
+                {
+                    <p class="big">Ready?</p>
+                    <p>Press <kbd>Space</kbd> or the Start button</p>
+                }
+                else if (state == GameState.Paused)
+                {
+                    <p class="big">Paused</p>
+                    <p>Press <kbd>Space</kbd> to continue</p>
+                }
+                else
+                {
+                    <p class="big">@(won ? "You win!" : "Game over")</p>
+                    <p>Score: @score @(newRecord ? "- New best score!" : "")</p>
+                    <p>Press <kbd>Enter</kbd> to play again</p>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="controls">
+        <div class="dpad" aria-hidden="true">
+            <button type="button" tabindex="-1" class="up" @onclick="() => PressDirection(0, -1)">&#9650;</button>
+            <button type="button" tabindex="-1" class="left" @onclick="() => PressDirection(-1, 0)">&#9664;</button>
+            <button type="button" tabindex="-1" class="right" @onclick="() => PressDirection(1, 0)">&#9654;</button>
+            <button type="button" tabindex="-1" class="down" @onclick="() => PressDirection(0, 1)">&#9660;</button>
+        </div>
+        <div class="actions">
+            <button type="button" tabindex="-1" class="action" @onclick="PressStartPause">@StartPauseLabel</button>
+            <button type="button" tabindex="-1" class="action secondary" @onclick="PressRestart">Restart</button>
+        </div>
+    </div>
+
+    <p class="help">Arrow keys / WASD to move &middot; Space = start / pause &middot; Enter = restart</p>
+</div>
+
+@code {
+    private const int Size = 20;
+    private const string HighScoreKey = "snake-high-score";
+
+    private enum GameState { Ready, Running, Paused, GameOver }
+
+    private GameState state = GameState.Ready;
+    private ElementReference gameRef;
+
+    // Snake body: index 0 is the head.
+    private List<(int X, int Y)> snake = new();
+    private (int X, int Y) food;
+    private (int Dx, int Dy) direction = (1, 0);
+    private (int Dx, int Dy) pending = (1, 0);
+
+    private int score;
+    private int foodsEaten;
+    private int highScore;
+    private bool newRecord;
+    private bool won;
+
+    private CancellationTokenSource? cts;
+    private readonly Random rng = new();
+
+    // Every 5 foods the level goes up and the snake gets faster.
+    private int Level => foodsEaten / 5 + 1;
+    private int IntervalMs => Math.Max(70, 180 - (Level - 1) * 15);
+
+    private string StartPauseLabel => state switch
+    {
+        GameState.Running => "Pause",
+        GameState.Paused => "Resume",
+        _ => "Start"
+    };
+
+    protected override void OnInitialized() => ResetBoard();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            var saved = await JS.InvokeAsync<string?>("localStorage.getItem", HighScoreKey);
+            if (int.TryParse(saved, out var value))
+            {
+                highScore = value;
+                StateHasChanged();
+            }
+        }
+        catch { /* localStorage not available: keep the in-memory best score */ }
+
+        await gameRef.FocusAsync();
+    }
+
+    // ---------- Game control ----------
+
+    private void ResetBoard()
+    {
+        snake = new List<(int X, int Y)> { (10, 10), (9, 10), (8, 10) };
+        direction = (1, 0);
+        pending = (1, 0);
+        score = 0;
+        foodsEaten = 0;
+        newRecord = false;
+        won = false;
+        PlaceFood();
+    }
+
+    private void StartGame()
+    {
+        StopLoop();
+        ResetBoard();
+        state = GameState.Running;
+        RunLoop();
+    }
+
+    private void TogglePause()
+    {
+        if (state == GameState.Running)
+        {
+            StopLoop();
+            state = GameState.Paused;
+        }
+        else if (state == GameState.Paused)
+        {
+            state = GameState.Running;
+            RunLoop();
+        }
+    }
+
+    private void StartOrPause()
+    {
+        if (state == GameState.Ready || state == GameState.GameOver) StartGame();
+        else TogglePause();
+    }
+
+    private void RunLoop()
+    {
+        cts = new CancellationTokenSource();
+        _ = LoopAsync(cts.Token);
+    }
+
+    private void StopLoop()
+    {
+        cts?.Cancel();
+        cts?.Dispose();
+        cts = null;
+    }
+
+    private async Task LoopAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested && state == GameState.Running)
+            {
+                await Task.Delay(IntervalMs, token);
+                Tick();
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Paused or restarted: nothing to do.
+        }
+    }
+
+    private void Tick()
+    {
+        direction = pending;
+        var head = snake[0];
+        (int X, int Y) next = (head.X + direction.Dx, head.Y + direction.Dy);
+
+        // Wall collision
+        if (next.X < 0 || next.X >= Size || next.Y < 0 || next.Y >= Size)
+        {
+            EndGame();
+            return;
+        }
+
+        var eating = next == food;
+
+        // Self collision (the tail cell is free this tick unless we are growing)
+        var lastIndex = eating ? snake.Count : snake.Count - 1;
+        for (var i = 0; i < lastIndex; i++)
+        {
+            if (snake[i] == next)
+            {
+                EndGame();
+                return;
+            }
+        }
+
+        snake.Insert(0, next);
+
+        if (eating)
+        {
+            score += 10;
+            foodsEaten++;
+            PlaceFood();
+        }
+        else
+        {
+            snake.RemoveAt(snake.Count - 1);
+        }
+    }
+
+    private void PlaceFood()
+    {
+        var free = new List<(int X, int Y)>();
+        for (var y = 0; y < Size; y++)
+            for (var x = 0; x < Size; x++)
+                if (!snake.Contains((x, y))) free.Add((x, y));
+
+        if (free.Count == 0)
+        {
+            won = true;
+            EndGame();
+            return;
+        }
+
+        food = free[rng.Next(free.Count)];
+    }
+
+    private void EndGame()
+    {
+        StopLoop();
+        state = GameState.GameOver;
+
+        if (score > highScore)
+        {
+            highScore = score;
+            newRecord = true;
+            _ = SaveHighScoreAsync();
+        }
+    }
+
+    private async Task SaveHighScoreAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", HighScoreKey, highScore.ToString());
+        }
+        catch { /* ignore */ }
+    }
+
+    // ---------- Input ----------
+
+    private void SetDirection(int dx, int dy)
+    {
+        if (state != GameState.Running) return;
+        // A snake cannot turn 180 degrees into itself.
+        if (dx == -direction.Dx && dy == -direction.Dy) return;
+        pending = (dx, dy);
+    }
+
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "ArrowUp": case "w": case "W": SetDirection(0, -1); break;
+            case "ArrowDown": case "s": case "S": SetDirection(0, 1); break;
+            case "ArrowLeft": case "a": case "A": SetDirection(-1, 0); break;
+            case "ArrowRight": case "d": case "D": SetDirection(1, 0); break;
+            case " ": case "Spacebar": StartOrPause(); break;
+            case "Enter": StartGame(); break;
+        }
+    }
+
+    private async Task PressDirection(int dx, int dy)
+    {
+        SetDirection(dx, dy);
+        await gameRef.FocusAsync();
+    }
+
+    private async Task PressStartPause()
+    {
+        StartOrPause();
+        await gameRef.FocusAsync();
+    }
+
+    private async Task PressRestart()
+    {
+        StartGame();
+        await gameRef.FocusAsync();
+    }
+
+    // ---------- Rendering helpers ----------
+
+    private string CellClass(int x, int y)
+    {
+        if (snake.Count > 0 && snake[0] == (x, y)) return "snake head";
+        if (snake.Contains((x, y))) return "snake";
+        if (food == (x, y)) return "food";
+        return "";
+    }
+
+    public void Dispose() => StopLoop();
+}
