@@ -1,4 +1,4 @@
-# Snake (Blazor WebAssembly, .NET 9)
+# Snake (Blazor WebAssembly, .NET 8)
 
 Classic Snake game built with Blazor.
 
